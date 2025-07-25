@@ -26,7 +26,8 @@ CRITERIA = {"mse": mse,
             "mae": mae,
             "poisson": poisson,
             "hamming": hamming,
-            "crossentropy": crossentropy}
+            "crossentropy": crossentropy,
+            'mae_ci90':mae_ci90}
 
 
 #########################################################################
