@@ -1,5 +1,5 @@
 import numpy as np
-
+from scipy.stats import t # Make sure scipy.stats is imported
 
 SCORING = {
     'linear': lambda y, yh: y - yh,
