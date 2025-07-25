@@ -4,10 +4,10 @@ from setuptools import setup, find_packages
 HERE = pathlib.Path(__file__).parent
 
 VERSION = '0.3.5'
-PACKAGE_NAME = 'linear-tree'
+PACKAGE_NAME = 'linear-tree-gebaly'
 AUTHOR = 'Marco Cerliani'
 AUTHOR_EMAIL = 'cerlymarco@gmail.com'
-URL = 'https://github.com/cerlymarco/linear-tree'
+URL = 'https://github.com/m-elgebaly/linear-tree-gebaly.git'
 
 LICENSE = 'MIT'
 DESCRIPTION = 'A python library to build Model Trees with Linear Models at the leaves.'
