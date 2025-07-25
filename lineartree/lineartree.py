@@ -159,7 +159,7 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
         -------
         self : object
         """
-        reg_criterions = ('mse', 'rmse', 'mae', 'poisson')
+        reg_criterions = ('mse', 'rmse', 'mae', 'poisson', 'mae_ci90')
 
         if self.criterion not in reg_criterions:
             raise ValueError("Regression tasks support only criterion in {}, "
