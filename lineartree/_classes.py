@@ -103,7 +103,10 @@ def _parallel_binning_fit(split_feat, _self, X, X_transformed, y,
         for q in _bin:
 
             # create 1D bool mask for right/left children
-            mask = (X[:, col] > q)
+            if col in _self._categorical_features:
+                mask = (X[:, col] == q)
+            else: # Otherwise, it's a standard numeric split
+                mask = (X[:, col] > q)
 
             n_left, n_right = (~mask).sum(), mask.sum()
 
@@ -789,7 +792,7 @@ class _LinearTree(BaseEstimator):
 
                 summary[N.id] = {
                     'col': feature_names[Cl.threshold[-1][0]],
-                    'th': Cl.threshold[-1][-1] if isinstance(Cl.threshold[-1][-1], list) else round(Cl.threshold[-1][-1], 5),
+                    'th': round(val, 5) if isinstance((val := Cl.threshold[-1][-1]), numbers.Number) else val,
                     'loss': round(Cl.w_loss + Cr.w_loss, 5),
                     'samples': Cl.n_samples + Cr.n_samples,
                     'children': (Cl.id, Cr.id),
@@ -943,29 +946,20 @@ class _LinearTree(BaseEstimator):
 
         # create nodes
         for n in summary:
-            if 'col' in summary[n]:
-                if isinstance(summary[n]['th'], list):
-                    # Use 'in' for group splits
-                    msg = "id_node: {}\\n{} in {}\\nloss: {:.4f}\\nsamples: {}"
-                else:
-                    # Use '<=' for standard numeric splits
-                    msg = "id_node: {}\\n{} <= {:.3f}\\nloss: {:.4f}\\nsamples: {}"
+            th_val = summary[n]['th']
+            col_name = summary[n]['col']
 
-                msg = msg.format(
-                    n, summary[n]['col'], summary[n]['th'],
-                    summary[n]['loss'], summary[n]['samples']
-                )
-                graph.add_node(pydot.Node(n, label=msg, shape='rectangle'))
-
-                for c in summary[n]['children']:
-                    if c not in summary:
-                        graph.add_node(pydot.Node(c, label="...",
-                                                  shape='rectangle'))
-
+            # Check for group split (threshold is a list)
+            if isinstance(th_val, list):
+                msg = f"id_node: {n}\\n{col_name} in {th_val}\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+            # Check for numeric split (threshold is a number)
+            elif isinstance(th_val, numbers.Number):
+                msg = f"id_node: {n}\\n{col_name} <= {th_val:.3f}\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+            # Otherwise, it must be a single categorical split (threshold is a string)
             else:
-                msg = "id_node: {}\nloss: {:.4f}\nsamples: {}".format(
-                    n, summary[n]['loss'], summary[n]['samples'])
-                graph.add_node(pydot.Node(n, label=msg))
+                msg = f"id_node: {n}\\n{col_name} == '{th_val}'\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+
+            graph.add_node(pydot.Node(n, label=msg, shape='rectangle'))
 
         # add edges
         for n in summary:
