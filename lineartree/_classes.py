@@ -887,8 +887,8 @@ class _LinearTree(BaseEstimator):
             X,
             reset=False,
             accept_sparse=False,
-            dtype='float32',
-            force_all_finite=True,
+            dtype=None,                   # CHANGE THIS
+            force_all_finite='allow-nan', # CHANGE THIS
             ensure_2d=True,
             allow_nd=False,
             ensure_min_features=self.n_features_in_
