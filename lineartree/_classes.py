@@ -390,12 +390,35 @@ class _LinearTree(BaseEstimator):
         n_sample, self.n_features_in_ = X.shape
         self.feature_importances_ = np.zeros((self.n_features_in_,))
 
-        # extract quantiles
-        bins = np.linspace(0, 1, self.max_bins)[1:-1]
-        bins = np.quantile(X, bins, axis=0)
-        bins = list(bins.T)
-        bins = [np.unique(X[:, c]) if c in self._categorical_features
-                else np.unique(q) for c, q in enumerate(bins)]
+        # # extract quantiles
+        # bins = np.linspace(0, 1, self.max_bins)[1:-1]
+        # bins = np.quantile(X, bins, axis=0)
+        # bins = list(bins.T)
+        # bins = [np.unique(X[:, c]) if c in self._categorical_features
+        #         else np.unique(q) for c, q in enumerate(bins)]
+
+        # --- START: NEW, ROBUST BIN CREATION ---
+        numeric_features = [i for i in range(self.n_features_in_) if i not in self._categorical_features]
+
+        # Initialize bins for all features as an empty list
+        bins = [[] for _ in range(self.n_features_in_)]
+
+        # 1. Calculate bins ONLY for numeric features
+        if numeric_features:
+            # Note: X[:, numeric_features] is guaranteed to be numeric
+            # We must convert to float in case they are integers, for quantile to work smoothly
+            numeric_data = X[:, numeric_features].astype(float)
+            percentiles = np.linspace(0, 1, self.max_bins)[1:-1]
+            numeric_bins = np.quantile(numeric_data, percentiles, axis=0)
+            
+            # Place the calculated bins in the correct positions in the main list
+            for i, col_idx in enumerate(numeric_features):
+                bins[col_idx] = np.unique(numeric_bins[:, i])
+
+        # 2. For categorical features, the bins are simply their unique values
+        for col_idx in self._categorical_features:
+            bins[col_idx] = np.unique(X[:, col_idx])
+        # --- END: NEW, ROBUST BIN CREATION ---
 
         # check if base_estimator supports fitting with sample_weights
         support_sample_weight = has_fit_parameter(self.base_estimator,
@@ -418,7 +441,8 @@ class _LinearTree(BaseEstimator):
             largs['classes'] = self.classes_
 
         loss = CRITERIA[self.criterion](
-        model, X_transformed[:, self._linear_features], y, weights=weights, **largs)
+        model, X_transformed[:, self._linear_features], y,
+        weights=weights, **largs)
         loss = round(loss, 5)
 
         self._nodes[''] = Node(
@@ -438,15 +462,9 @@ class _LinearTree(BaseEstimator):
 
             if weights is None:
                 split_t, split_col, left_node, right_node = self._split(
-            X[mask], X_transformed[mask], y[mask], bins, # Pass subsets of both matrices
-            support_sample_weight, weights[mask] if weights is not None else None,
-            loss=loss)
-            else:
-                split_t, split_col, left_node, right_node = self._split(
-            X[mask], X_transformed[mask], y[mask], bins, # Pass subsets of both matrices
-            support_sample_weight, weights[mask] if weights is not None else None,
-            loss=loss)
-
+    X[mask], X_transformed[mask], y[mask], bins,
+    support_sample_weight, weights[mask] if weights is not None else None,
+    loss=loss)
             # no utility in splitting
             if split_col is None or len(queue[-1]) >= self.max_depth:
                 self._leaves[queue[-1]] = self._nodes[queue[-1]]
