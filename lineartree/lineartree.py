@@ -216,8 +216,8 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
             X,
             reset=False,
             accept_sparse=False,
-            dtype='float32',
-            force_all_finite=True,
+            dtype=None,                   # CRITICAL FIX
+            force_all_finite='allow-nan', # CRITICAL FIX
             ensure_2d=True,
             allow_nd=False,
             ensure_min_features=self.n_features_in_
@@ -457,8 +457,8 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
             X,
             reset=False,
             accept_sparse=False,
-            dtype='float32',
-            force_all_finite=True,
+            dtype=None,                   # CRITICAL FIX
+            force_all_finite='allow-nan', # CRITICAL FIX
             ensure_2d=True,
             allow_nd=False,
             ensure_min_features=self.n_features_in_
