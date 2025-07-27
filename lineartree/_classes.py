@@ -789,7 +789,7 @@ class _LinearTree(BaseEstimator):
 
                 summary[N.id] = {
                     'col': feature_names[Cl.threshold[-1][0]],
-                    'th': Cl.threshold[-1][-1] if isinstance(Cl.threshold[-1][-1], list) else round(Cl.threshold[-1][-1], 5),
+                    'th': round(Cl.threshold[-1][-1], 5) if isinstance(Cl.threshold[-1][-1], numbers.Number) else Cl.threshold[-1][-1],
                     'loss': round(Cl.w_loss + Cr.w_loss, 5),
                     'samples': Cl.n_samples + Cr.n_samples,
                     'children': (Cl.id, Cr.id),
@@ -944,17 +944,20 @@ class _LinearTree(BaseEstimator):
         # create nodes
         for n in summary:
             if 'col' in summary[n]:
-                if isinstance(summary[n]['th'], list):
-                    # Use 'in' for group splits
-                    msg = "id_node: {}\\n{} in {}\\nloss: {:.4f}\\nsamples: {}"
-                else:
-                    # Use '<=' for standard numeric splits
-                    msg = "id_node: {}\\n{} <= {:.3f}\\nloss: {:.4f}\\nsamples: {}"
+                th_val = summary[n]['th']
+                col_name = summary[n]['col']
 
-                msg = msg.format(
-                    n, summary[n]['col'], summary[n]['th'],
-                    summary[n]['loss'], summary[n]['samples']
-                )
+                # This logic correctly formats the label for all split types
+                # Case 1: The threshold is a list (e.g., ['A', 'B']) -> Grouped split
+                if isinstance(th_val, list):
+                    msg = f"id_node: {n}\\n{col_name} in {th_val}\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+                # Case 2: The threshold is a number -> Numeric split
+                elif isinstance(th_val, numbers.Number):
+                    msg = f"id_node: {n}\\n{col_name} <= {th_val:.3f}\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+                # Case 3: The threshold is anything else (i.e., a single string like 'A') -> Single category split
+                else:
+                    msg = f"id_node: {n}\\n{col_name} == '{th_val}'\\nloss: {summary[n]['loss']:.4f}\\nsamples: {summary[n]['samples']}"
+
                 graph.add_node(pydot.Node(n, label=msg, shape='rectangle'))
 
                 for c in summary[n]['children']:
