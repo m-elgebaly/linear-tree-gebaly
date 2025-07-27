@@ -288,80 +288,81 @@ class _LinearTree(BaseEstimator):
     def _parallel_args(self):
         return {}
 
+# In class _LinearTree
     def _split(self, X, X_transformed, y, bins,
-               support_sample_weight,
-               weights=None,
-               loss=None):
+            support_sample_weight,
+            weights=None,
+            loss=None):
         """Evaluate optimal splits in a given node (in a specific partition of
         X and y).
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            The training input samples.
-
-        y : array-like of shape (n_samples, )
-            The target values (class labels in classification, real numbers in
-            regression).
-
-        bins : array-like of shape (max_bins - 2, )
-            The bins to use to find an optimal split. Expressed as percentiles.
-
-        support_sample_weight : bool
-            Whether the estimator's fit method supports sample_weight.
-
-        weights : array-like of shape (n_samples, ), default=None
-            Sample weights. If None, then samples are equally weighted.
-            Note that if the base estimator does not support sample weighting,
-            the sample weights are still used to evaluate the splits.
-
-        loss : float, default=None
-            The loss of the parent node. A split is computed if the weighted
-            loss sum of the two children is lower than the loss of the parent.
-            A None value implies the first fit on all the data to evaluate
-            the benefits of possible future splits.
-
-        Returns
-        -------
-        self : object
         """
-        # Parallel loops
-        n_jobs, split_feat = _partition_columns(self._split_features, self.n_jobs)
-
-        # partition columns splittings between jobs
-        all_results = Parallel(n_jobs=n_jobs, verbose=0,
-                               **self._parallel_args())(
-            delayed(_parallel_binning_fit)(
-                feat,
-                self, X, y,
-                weights, support_sample_weight,
-                [bins[i] for i in feat],
-                loss
+        all_results = []
+        n_jobs = self.n_jobs
+        
+        # Dispatch numeric features to the standard binning function
+        numeric_split_features = [f for f in self._split_features if f not in self._categorical_features]
+        if numeric_split_features:
+            n_num_jobs, split_feat_num = _partition_columns(numeric_split_features, n_jobs)
+            numeric_results = Parallel(n_jobs=n_num_jobs, verbose=0, **self._parallel_args())(
+                delayed(_parallel_binning_fit)(
+                    feat, self, X, X_transformed, y,
+                    weights, support_sample_weight, [bins[i] for i in feat], loss
+                )
+                for feat in split_feat_num
             )
-            for feat in split_feat)
+            all_results.extend(numeric_results)
 
-        # extract results from parallel loops
-        _losses, split_t, split_col = [], [], []
-        left_node, right_node = [], []
+        # Dispatch categorical features to the correct function based on the mode
+        categorical_split_features = [f for f in self._split_features if f in self._categorical_features]
+        if categorical_split_features:
+            n_cat_jobs, split_feat_cat = _partition_columns(categorical_split_features, n_jobs)
+            
+            if self.categorical_split_mode == 'group':
+                # Use the special group-based splitting function
+                categorical_results = Parallel(n_jobs=n_cat_jobs, verbose=0, **self._parallel_args())(
+                    delayed(_parallel_binning_fit_categorical)(
+                        feat, self, X, X_transformed, y,
+                        weights, support_sample_weight, loss
+                    )
+                    for feat in split_feat_cat
+                )
+            else: # 'binary' mode for splitting
+                # Use the standard function, as it treats each category as a "bin"
+                categorical_results = Parallel(n_jobs=n_cat_jobs, verbose=0, **self._parallel_args())(
+                    delayed(_parallel_binning_fit)(
+                        feat, self, X, X_transformed, y,
+                        weights, support_sample_weight, [bins[i] for i in feat], loss
+                    )
+                    for feat in split_feat_cat
+                )
+            all_results.extend(categorical_results)
+
+        # If no splits were evaluated, return nothing
+        if not all_results:
+            return None, None, (None,) * 5, (None,) * 5
+
+        # Extract results and find the best split from all jobs
+        _losses, split_t_list, split_col_list, left_node_list, right_node_list = [], [], [], [], []
         for job_res in all_results:
             _losses.append(job_res[0])
-            split_t.append(job_res[1])
-            split_col.append(job_res[2])
-            left_node.append(job_res[3])
-            right_node.append(job_res[4])
+            split_t_list.append(job_res[1])
+            split_col_list.append(job_res[2])
+            left_node_list.append(job_res[3])
+            right_node_list.append(job_res[4])
 
-        # select best results
+        if not _losses or min(_losses) >= loss:
+            return None, None, (None,) * 5, (None,) * 5
+        
+        # Select best results
         _id_best = np.argmin(_losses)
-        if loss - _losses[_id_best] > self.min_impurity_decrease:
-            split_t = split_t[_id_best]
-            split_col = split_col[_id_best]
-            left_node = left_node[_id_best]
-            right_node = right_node[_id_best]
+        if (loss - _losses[_id_best]) > self.min_impurity_decrease:
+            split_t = split_t_list[_id_best]
+            split_col = split_col_list[_id_best]
+            left_node = left_node_list[_id_best]
+            right_node = right_node_list[_id_best]
         else:
-            split_t = None
-            split_col = None
-            left_node = (None, None, None, None, None)
-            right_node = (None, None, None, None, None)
+            split_t, split_col = None, None
+            left_node, right_node = (None,) * 5, (None,) * 5
 
         return split_t, split_col, left_node, right_node
 

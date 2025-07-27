@@ -178,8 +178,8 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
             X, y,
             reset=True,
             accept_sparse=False,
-            dtype='float32',
-            force_all_finite=True,
+            dtype=None,  # CHANGE 'float32' to None
+            force_all_finite='allow-nan', # Allow categoricals to pass
             ensure_2d=True,
             allow_nd=False,
             multi_output=True,
