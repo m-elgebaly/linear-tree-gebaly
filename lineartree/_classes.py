@@ -397,28 +397,62 @@ class _LinearTree(BaseEstimator):
         # bins = [np.unique(X[:, c]) if c in self._categorical_features
         #         else np.unique(q) for c, q in enumerate(bins)]
 
-        # --- START: NEW, ROBUST BIN CREATION ---
-        numeric_features = [i for i in range(self.n_features_in_) if i not in self._categorical_features]
+        # # --- START: NEW, ROBUST BIN CREATION ---
+        # numeric_features = [i for i in range(self.n_features_in_) if i not in self._categorical_features]
 
-        # Initialize bins for all features as an empty list
-        bins = [[] for _ in range(self.n_features_in_)]
+        # # Initialize bins for all features as an empty list
+        # bins = [[] for _ in range(self.n_features_in_)]
 
-        # 1. Calculate bins ONLY for numeric features
-        if numeric_features:
-            # Note: X[:, numeric_features] is guaranteed to be numeric
-            # We must convert to float in case they are integers, for quantile to work smoothly
-            numeric_data = X[:, numeric_features].astype(float)
-            percentiles = np.linspace(0, 1, self.max_bins)[1:-1]
-            numeric_bins = np.quantile(numeric_data, percentiles, axis=0)
+        # # 1. Calculate bins ONLY for numeric features
+        # if numeric_features:
+        #     # Note: X[:, numeric_features] is guaranteed to be numeric
+        #     # We must convert to float in case they are integers, for quantile to work smoothly
+        #     numeric_data = X[:, numeric_features].astype(float)
+        #     percentiles = np.linspace(0, 1, self.max_bins)[1:-1]
+        #     numeric_bins = np.quantile(numeric_data, percentiles, axis=0)
             
-            # Place the calculated bins in the correct positions in the main list
-            for i, col_idx in enumerate(numeric_features):
-                bins[col_idx] = np.unique(numeric_bins[:, i])
+        #     # Place the calculated bins in the correct positions in the main list
+        #     for i, col_idx in enumerate(numeric_features):
+        #         bins[col_idx] = np.unique(numeric_bins[:, i])
 
-        # 2. For categorical features, the bins are simply their unique values
-        for col_idx in self._categorical_features:
-            bins[col_idx] = np.unique(X[:, col_idx])
-        # --- END: NEW, ROBUST BIN CREATION ---
+        # # 2. For categorical features, the bins are simply their unique values
+        # for col_idx in self._categorical_features:
+        #     bins[col_idx] = np.unique(X[:, col_idx])
+        # # --- END: NEW, ROBUST BIN CREATION ---
+
+        # --- START: FINAL, FOOLPROOF BIN CREATION ---
+        bins = [[] for _ in range(self.n_features_in_)]
+        percentiles = np.linspace(0, 1, self.max_bins)[1:-1]
+
+        for c in range(self.n_features_in_):
+            col_data = X[:, c]
+            # Check if the column is explicitly marked as categorical
+            if c in self._categorical_features:
+                bins[c] = np.unique(col_data)
+                continue
+
+            # For columns NOT marked as categorical, we VERIFY if they are numeric.
+            try:
+                # This will succeed for numeric columns (int, float)
+                # and fail for columns with non-numeric strings.
+                numeric_col_data = col_data.astype(float)
+                
+                # If conversion succeeds, calculate quantiles.
+                # Handle constant columns to avoid quantile errors.
+                if np.unique(numeric_col_data).size > 1:
+                    bins[c] = np.unique(np.quantile(numeric_col_data, percentiles))
+                else:
+                    bins[c] = np.unique(numeric_col_data)
+
+            except (ValueError, TypeError):
+                # If conversion to float fails, we raise a specific, helpful error.
+                raise ValueError(
+                    f"\n\n>> ERROR: Column index {c} contains non-numeric data (e.g., strings) "
+                    f"but was not specified in the `categorical_features` parameter.\n"
+                    f">> Please add {c} to your list of categorical features and run `.fit()` again.\n"
+                )
+        # --- END: FINAL, FOOLPROOF BIN CREATION ---
+
 
         # check if base_estimator supports fitting with sample_weights
         support_sample_weight = has_fit_parameter(self.base_estimator,
@@ -460,8 +494,7 @@ class _LinearTree(BaseEstimator):
         i = 1
         while len(queue) > 0:
 
-            if weights is None:
-                split_t, split_col, left_node, right_node = self._split(
+            split_t, split_col, left_node, right_node = self._split(
     X[mask], X_transformed[mask], y[mask], bins,
     support_sample_weight, weights[mask] if weights is not None else None,
     loss=loss)
