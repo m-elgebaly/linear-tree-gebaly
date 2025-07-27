@@ -789,7 +789,7 @@ class _LinearTree(BaseEstimator):
 
                 summary[N.id] = {
                     'col': feature_names[Cl.threshold[-1][0]],
-                    'th': round(Cl.threshold[-1][-1], 5),
+                    'th': Cl.threshold[-1][-1] if isinstance(Cl.threshold[-1][-1], list) else round(Cl.threshold[-1][-1], 5),
                     'loss': round(Cl.w_loss + Cr.w_loss, 5),
                     'samples': Cl.n_samples + Cr.n_samples,
                     'children': (Cl.id, Cr.id),
@@ -944,14 +944,11 @@ class _LinearTree(BaseEstimator):
         # create nodes
         for n in summary:
             if 'col' in summary[n]:
-                if isinstance(summary[n]['col'], str):
-                    msg = "id_node: {}\n{} <= {}\nloss: {:.4f}\nsamples: {}"
-                else:
-                    msg = "id_node: {}\nX[{}] <= {}\nloss: {:.4f}\nsamples: {}"
-
                 if isinstance(summary[n]['th'], list):
+                    # Use 'in' for group splits
                     msg = "id_node: {}\\n{} in {}\\nloss: {:.4f}\\nsamples: {}"
-                else: # Standard numeric split
+                else:
+                    # Use '<=' for standard numeric splits
                     msg = "id_node: {}\\n{} <= {:.3f}\\nloss: {:.4f}\\nsamples: {}"
 
                 msg = msg.format(
