@@ -7,6 +7,10 @@ from ._classes import _predict_branch
 from ._classes import _LinearTree, _LinearBoosting, _LinearForest
 
 
+import pandas as pd # Add this line
+
+
+
 class LinearTreeRegressor(_LinearTree, RegressorMixin):
     """A Linear Tree Regressor.
 
@@ -122,9 +126,11 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
     array([8.8817842e-16])
     """
     def __init__(self, base_estimator, *, criterion='mse', max_depth=5,
-                 min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
-                 min_impurity_decrease=0.0, categorical_features=None,
-                 split_features=None, linear_features=None, n_jobs=None):
+                min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
+                min_impurity_decrease=0.0, categorical_features=None,
+                categorical_split_mode='binary',  # Add this
+                encode_categorical=False,         # Add this
+                split_features=None, linear_features=None, n_jobs=None):
 
         self.base_estimator = base_estimator
         self.criterion = criterion
@@ -134,6 +140,8 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
         self.max_bins = max_bins
         self.min_impurity_decrease = min_impurity_decrease
         self.categorical_features = categorical_features
+        self.categorical_split_mode = categorical_split_mode  # Add this
+        self.encode_categorical = encode_categorical         # Add this
         self.split_features = split_features
         self.linear_features = linear_features
         self.n_jobs = n_jobs
@@ -215,18 +223,28 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
             ensure_min_features=self.n_features_in_
         )
 
-        if self.n_targets_ > 1:
-            pred = np.zeros((X.shape[0], self.n_targets_))
+        # Transform X if categorical features were binary encoded during fit
+        if self.encode_categorical and hasattr(self, '_binary_encoder'):
+            # The encoder expects a DataFrame with the same column names used in fit
+            X_df = pd.DataFrame(X, columns=self.original_feature_names_)
+            X_transformed = self._binary_encoder.transform(X_df)
+            X_transformed = X_transformed.to_numpy(dtype=np.float32)
         else:
-            pred = np.zeros(X.shape[0])
+            X_transformed = X
+
+        if self.n_targets_ > 1:
+            pred = np.zeros((X_transformed.shape[0], self.n_targets_))
+        else:
+            pred = np.zeros(X_transformed.shape[0])
 
         for L in self._leaves.values():
-
+            # Leaf selection uses the ORIGINAL data and original split rules
             mask = _predict_branch(X, L.threshold)
             if (~mask).all():
                 continue
-
-            pred[mask] = L.model.predict(X[np.ix_(mask, self._linear_features)])
+            
+            # Prediction within the leaf uses the TRANSFORMED data
+            pred[mask] = L.model.predict(X_transformed[np.ix_(mask, self._linear_features)])
 
         return pred
 
@@ -349,9 +367,11 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
     array([1])
     """
     def __init__(self, base_estimator, *, criterion='hamming', max_depth=5,
-                 min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
-                 min_impurity_decrease=0.0, categorical_features=None,
-                 split_features=None, linear_features=None, n_jobs=None):
+                min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
+                min_impurity_decrease=0.0, categorical_features=None,
+                categorical_split_mode='binary', # Add this
+                encode_categorical=False,        # Add this
+                split_features=None, linear_features=None, n_jobs=None):
 
         self.base_estimator = base_estimator
         self.criterion = criterion
@@ -364,6 +384,8 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
         self.split_features = split_features
         self.linear_features = linear_features
         self.n_jobs = n_jobs
+        self.categorical_split_mode = categorical_split_mode  # Add this
+        self.encode_categorical = encode_categorical         # Add this
 
     def fit(self, X, y, sample_weight=None):
         """Build a Linear Tree of a linear estimator from the training
@@ -442,7 +464,22 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
             ensure_min_features=self.n_features_in_
         )
 
-        pred = np.empty(X.shape[0], dtype=self.classes_.dtype)
+        #pred = np.empty(X.shape[0], dtype=self.classes_.dtype)
+
+            # Transform X if categorical features were binary encoded during fit
+        if self.encode_categorical and hasattr(self, '_binary_encoder'):
+            # The encoder expects a DataFrame, so we convert, transform, and go back to numpy
+            X_df = pd.DataFrame(X, columns=[f'f{i}' for i in range(X.shape[1])])
+            X_transformed = self._binary_encoder.transform(X_df)
+            X_transformed = X_transformed.to_numpy(dtype=np.float32)
+        else:
+            X_transformed = X
+
+        if self.n_targets_ > 1:
+            pred = np.zeros((X_transformed.shape[0], self.n_targets_))
+        else:
+            pred = np.zeros(X_transformed.shape[0])
+
 
         for L in self._leaves.values():
 

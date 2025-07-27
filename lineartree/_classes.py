@@ -17,6 +17,10 @@ from ._criterion import SCORING
 from ._criterion import mse, rmse, mae, poisson, mae_ci90
 from ._criterion import hamming, crossentropy
 
+import pandas as pd  # Add this
+from itertools import combinations  # Add this
+from category_encoders import BinaryEncoder # Add this
+
 import sklearn
 _sklearn_v1 = eval(sklearn.__version__.split('.')[0]) > 0
 
@@ -168,25 +172,78 @@ def _parallel_binning_fit(split_feat, _self, X, y,
     return loss, split_t, split_col, left_node, right_node
 
 
+# (Place this function definition before the _LinearTree class)
+def _parallel_binning_fit_categorical(split_feat, _self, X, X_transformed, y,
+                                      weights, support_sample_weight, loss):
+    """Private function to find the best categorical column splittings by grouping."""
+    n_sample = X.shape[0]
+    feval = CRITERIA[_self.criterion]
+    split_t, split_col = None, None
+    left_node, right_node = (None,) * 5, (None,) * 5
+    largs_left, largs_right = {'classes': None}, {'classes': None}
+
+    if n_sample < _self._min_samples_split:
+        return loss, split_t, split_col, left_node, right_node
+
+    for col in split_feat:
+        unique_cats = np.unique(X[:, col])
+        if len(unique_cats) < 3: continue
+
+        group_combinations = list(combinations(unique_cats, 1)) + list(combinations(unique_cats, 2))
+
+        for group in group_combinations:
+            q = list(group)
+            mask = np.isin(X[:, col], q) # Grouping uses ORIGINAL X
+            n_left, n_right = mask.sum(), (~mask).sum()
+            if n_left < _self._min_samples_leaf or n_right < _self._min_samples_leaf: continue
+
+            left_mesh = np.ix_(mask, _self._linear_features)
+            right_mesh = np.ix_(~mask, _self._linear_features)
+            
+            model_left, model_right = deepcopy(_self.base_estimator), deepcopy(_self.base_estimator)
+            # ... (The entire model fitting logic from the previous answer goes here,
+            # ensuring it uses X_transformed[left_mesh] and X_transformed[right_mesh] for fitting.)
+
+            # Example for `weights is None` case:
+            if weights is None:
+                model_left.fit(X_transformed[left_mesh], y[mask])
+                loss_left = feval(model_left, X_transformed[left_mesh], y[mask], **largs_left)
+                wloss_left = loss_left * (n_left / n_sample)
+                model_right.fit(X_transformed[right_mesh], y[~mask])
+                loss_right = feval(model_right, X_transformed[right_mesh], y[~mask], **largs_right)
+                wloss_right = loss_right * (n_right / n_sample)
+            # ... (Add the `else` block for sample weights here as well)
+
+            total_loss = round(wloss_left + wloss_right, 5)
+            if total_loss < loss:
+                split_t, split_col, loss = q, col, total_loss
+                left_node = (model_left, loss_left, wloss_left, n_left, largs_left.get('classes'))
+                right_node = (model_right, loss_right, wloss_right, n_right, largs_right.get('classes'))
+
+    return loss, split_t, split_col, left_node, right_node
+
+
 def _map_node(X, feat, direction, split):
     """Utility to map samples to nodes"""
-    if direction == 'L':
-        mask = (X[:, feat] <= split)
+    if isinstance(split, list):
+        if direction == 'L':
+            mask = np.isin(X[:, feat], split)
+        else:
+            mask = ~np.isin(X[:, feat], split)
     else:
-        mask = (X[:, feat] > split)
-
+        if direction == 'L':
+            mask = (X[:, feat] <= split)
+        else:
+            mask = (X[:, feat] > split)
     return mask
-
 
 def _predict_branch(X, branch_history, mask=None):
     """Utility to map samples to branches"""
-
     if mask is None:
         mask = np.repeat(True, X.shape[0])
 
-    for node in branch_history:
-        mask = np.logical_and(_map_node(X, *node), mask)
-
+    for feat, direction, split_value in branch_history:
+        mask = np.logical_and(_map_node(X, feat, direction, split_value), mask)
     return mask
 
 
@@ -214,18 +271,16 @@ class _LinearTree(BaseEstimator):
     instead.
     """
     def __init__(self, base_estimator, *, criterion, max_depth,
-                 min_samples_split, min_samples_leaf, max_bins,
-                 min_impurity_decrease, categorical_features,
-                 split_features, linear_features, n_jobs):
-
-        self.base_estimator = base_estimator
-        self.criterion = criterion
-        self.max_depth = max_depth
-        self.min_samples_split = min_samples_split
-        self.min_samples_leaf = min_samples_leaf
-        self.max_bins = max_bins
+                min_samples_split, min_samples_leaf, max_bins,
+                min_impurity_decrease, categorical_features,
+                categorical_split_mode, encode_categorical, # Add these two
+                split_features, linear_features, n_jobs):
+        
+        # ... (assign all existing self attributes)
         self.min_impurity_decrease = min_impurity_decrease
         self.categorical_features = categorical_features
+        self.categorical_split_mode = categorical_split_mode # Add this
+        self.encode_categorical = encode_categorical       # Add this
         self.split_features = split_features
         self.linear_features = linear_features
         self.n_jobs = n_jobs
@@ -233,7 +288,7 @@ class _LinearTree(BaseEstimator):
     def _parallel_args(self):
         return {}
 
-    def _split(self, X, y, bins,
+    def _split(self, X, X_transformed, y, bins,
                support_sample_weight,
                weights=None,
                loss=None):
@@ -310,7 +365,7 @@ class _LinearTree(BaseEstimator):
 
         return split_t, split_col, left_node, right_node
 
-    def _grow(self, X, y, weights=None):
+    def _grow(self, X, X_transformed, y, weights=None): # Update signature
         """Grow and prune a Linear Tree from the training set (X, y).
 
         Parameters
@@ -354,16 +409,15 @@ class _LinearTree(BaseEstimator):
         largs = {'classes': None}
         model = deepcopy(self.base_estimator)
         if weights is None or not support_sample_weight:
-            model.fit(X[:, self._linear_features], y)
+            model.fit(X_transformed[:, self._linear_features], y)
         else:
-            model.fit(X[:, self._linear_features], y, sample_weight=weights)
+            model.fit(X_transformed[:, self._linear_features], y, sample_weight=weights)
 
         if hasattr(self, 'classes_'):
             largs['classes'] = self.classes_
 
         loss = CRITERIA[self.criterion](
-            model, X[:, self._linear_features], y,
-            weights=weights, **largs)
+        model, X_transformed[:, self._linear_features], y, weights=weights, **largs)
         loss = round(loss, 5)
 
         self._nodes[''] = Node(
@@ -383,14 +437,14 @@ class _LinearTree(BaseEstimator):
 
             if weights is None:
                 split_t, split_col, left_node, right_node = self._split(
-                    X[mask], y[mask], bins,
-                    support_sample_weight,
-                    loss=loss)
+            X[mask], X_transformed[mask], y[mask], bins, # Pass subsets of both matrices
+            support_sample_weight, weights[mask] if weights is not None else None,
+            loss=loss)
             else:
                 split_t, split_col, left_node, right_node = self._split(
-                    X[mask], y[mask], bins,
-                    support_sample_weight, weights[mask],
-                    loss=loss)
+            X[mask], X_transformed[mask], y[mask], bins, # Pass subsets of both matrices
+            support_sample_weight, weights[mask] if weights is not None else None,
+            loss=loss)
 
             # no utility in splitting
             if split_col is None or len(queue[-1]) >= self.max_depth:
@@ -516,9 +570,13 @@ class _LinearTree(BaseEstimator):
             raise ValueError(
                 "Only linear models are accepted as base_estimator. "
                 "Select one from linear_model class of scikit-learn.")
+        
+        n_feat = X.shape[1]
 
         if self.categorical_features is not None:
             cat_features = np.unique(self.categorical_features)
+            
+
 
             if not issubclass(cat_features.dtype.type, numbers.Integral):
                 raise ValueError(
@@ -554,27 +612,52 @@ class _LinearTree(BaseEstimator):
             split_features = np.arange(n_feat)
         self._split_features = split_features
 
-        if self.linear_features is not None:
-            linear_features = np.unique(self.linear_features)
+        # --- BINARY ENCODING LOGIC ---
+        X_transformed = X
+        self._encoded_feature_names = None
 
-            if not issubclass(linear_features.dtype.type, numbers.Integral):
-                raise ValueError(
-                    "No valid specification of linear_features. "
-                    "Only a scalar, list or array-like of integers is allowed.")
+        if self.encode_categorical and len(self._categorical_features) > 0:
+            # The encoder needs a DataFrame with consistent column names
+            self.original_feature_names_ = [f'f{i}' for i in range(n_feat)]
+            X_df = pd.DataFrame(X, columns=self.original_feature_names_)
 
-            if (linear_features < 0).any() or (linear_features >= n_feat).any():
-                raise ValueError(
-                    'Linear features must be in [0, {}].'.format(
-                        n_feat - 1))
+            # Specify which original columns to encode
+            cols_to_encode = [self.original_feature_names_[i] for i in self._categorical_features]
+            self._binary_encoder = BinaryEncoder(cols=cols_to_encode, handle_unknown='value', handle_missing='value')
 
-            if np.isin(linear_features, cat_features).any():
-                raise ValueError(
-                    "Linear features cannot be categorical features.")
+            X_transformed_df = self._binary_encoder.fit_transform(X_df)
+            X_transformed = X_transformed_df.to_numpy(dtype=np.float32)
+            
+            # Store names of the new binary features for the summary
+            self._encoded_feature_names = X_transformed_df.columns.tolist()
+            
+            # When encoding, the linear model will use ALL transformed features
+            self._linear_features = np.arange(X_transformed.shape[1])
         else:
-            linear_features = np.setdiff1d(np.arange(n_feat), cat_features)
-        self._linear_features = linear_features
+            # Original logic for setting up linear features if not encoding
 
-        self._grow(X, y, sample_weight)
+            if self.linear_features is not None:
+                linear_features = np.unique(self.linear_features)
+
+                if not issubclass(linear_features.dtype.type, numbers.Integral):
+                    raise ValueError(
+                        "No valid specification of linear_features. "
+                        "Only a scalar, list or array-like of integers is allowed.")
+
+                if (linear_features < 0).any() or (linear_features >= n_feat).any():
+                    raise ValueError(
+                        'Linear features must be in [0, {}].'.format(
+                            n_feat - 1))
+
+                if np.isin(linear_features, cat_features).any():
+                    raise ValueError(
+                        "Linear features cannot be categorical features.")
+            else:
+                linear_features = np.setdiff1d(np.arange(n_feat), cat_features)
+            self._linear_features = linear_features
+
+        # Grow the tree using BOTH original X (for splitting) and X_transformed (for fitting)
+        self._grow(X, X_transformed, y, sample_weight)
 
         normalizer = np.sum(self.feature_importances_)
         if normalizer > 0:
@@ -674,6 +757,20 @@ class _LinearTree(BaseEstimator):
 
             if hasattr(self, 'classes_'):
                 summary[L.id]['classes'] = L.classes
+
+            if hasattr(L.model, 'coef_'):
+            # Determine the correct feature names for the model's coefficients
+                if self.encode_categorical and hasattr(self, '_encoded_feature_names'):
+                    model_feature_names = self._encoded_feature_names
+                else: # Fallback for non-encoded case
+                    model_feature_names = [feature_names[i] for i in self._linear_features]
+                
+                summary[L.id]['model_details'] = {
+                    'intercept': L.model.intercept_,
+                    'coefficients': {
+                        name: round(coef, 5) for name, coef in zip(model_feature_names, L.model.coef_.flatten())
+                    }
+                }
 
         return summary
 
@@ -799,6 +896,11 @@ class _LinearTree(BaseEstimator):
                     msg = "id_node: {}\n{} <= {}\nloss: {:.4f}\nsamples: {}"
                 else:
                     msg = "id_node: {}\nX[{}] <= {}\nloss: {:.4f}\nsamples: {}"
+
+                if isinstance(summary[n]['th'], list):
+                    msg = "id_node: {}\\n{} in {}\\nloss: {:.4f}\\nsamples: {}"
+                else: # Standard numeric split
+                    msg = "id_node: {}\\n{} <= {:.3f}\\nloss: {:.4f}\\nsamples: {}"
 
                 msg = msg.format(
                     n, summary[n]['col'], summary[n]['th'],
