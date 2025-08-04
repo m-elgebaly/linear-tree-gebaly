@@ -125,13 +125,16 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
     >>> regr.predict([[0, 0, 0, 0]])
     array([8.8817842e-16])
     """
-    def __init__(self, base_estimator, *, criterion='mse', max_depth=5,
-                min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
-                min_impurity_decrease=0.0, categorical_features=None,
-                categorical_split_mode='binary',  # Add this
-                encode_categorical=False,         # Add this
-                split_features=None, linear_features=None, n_jobs=None):
-
+    def __init__(self, base_estimator, *, criterion, max_depth,
+                min_samples_split, min_samples_leaf, max_bins,
+                min_impurity_decrease, categorical_features,
+                categorical_split_mode, encode_categorical,
+                split_features, linear_features,
+                # MODIFICATION START
+                equation_features, exclude_split_features,
+                # MODIFICATION END
+                n_jobs):
+        
         self.base_estimator = base_estimator
         self.criterion = criterion
         self.max_depth = max_depth
@@ -140,10 +143,14 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
         self.max_bins = max_bins
         self.min_impurity_decrease = min_impurity_decrease
         self.categorical_features = categorical_features
-        self.categorical_split_mode = categorical_split_mode  # Add this
-        self.encode_categorical = encode_categorical         # Add this
+        self.categorical_split_mode = categorical_split_mode
+        self.encode_categorical = encode_categorical
         self.split_features = split_features
         self.linear_features = linear_features
+        # MODIFICATION START
+        self.equation_features = equation_features
+        self.exclude_split_features = exclude_split_features
+        # MODIFICATION END
         self.n_jobs = n_jobs
 
     def fit(self, X, y, sample_weight=None):
