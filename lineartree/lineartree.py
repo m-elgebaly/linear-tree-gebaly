@@ -125,16 +125,18 @@ class LinearTreeRegressor(_LinearTree, RegressorMixin):
     >>> regr.predict([[0, 0, 0, 0]])
     array([8.8817842e-16])
     """
-    def __init__(self, base_estimator, *, criterion, max_depth,
-                min_samples_split, min_samples_leaf, max_bins,
-                min_impurity_decrease, categorical_features,
-                categorical_split_mode, encode_categorical,
-                split_features, linear_features,
+    def __init__(self, base_estimator, *, criterion='mse', max_depth=5,
+                min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
+                min_impurity_decrease=0.0, categorical_features=None,
+                categorical_split_mode='binary',
+                encode_categorical=False,
+                split_features=None, linear_features=None,
                 # MODIFICATION START
-                equation_features, exclude_split_features,
+                equation_features=None,
+                exclude_split_features=None,
                 # MODIFICATION END
-                n_jobs):
-        
+                n_jobs=None):
+
         self.base_estimator = base_estimator
         self.criterion = criterion
         self.max_depth = max_depth
@@ -376,9 +378,14 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
     def __init__(self, base_estimator, *, criterion='hamming', max_depth=5,
                 min_samples_split=6, min_samples_leaf=0.1, max_bins=25,
                 min_impurity_decrease=0.0, categorical_features=None,
-                categorical_split_mode='binary', # Add this
-                encode_categorical=False,        # Add this
-                split_features=None, linear_features=None, n_jobs=None):
+                categorical_split_mode='binary',
+                encode_categorical=False,
+                split_features=None, linear_features=None,
+                # MODIFICATION START
+                equation_features=None,
+                exclude_split_features=None,
+                # MODIFICATION END
+                n_jobs=None):
 
         self.base_estimator = base_estimator
         self.criterion = criterion
@@ -390,9 +397,13 @@ class LinearTreeClassifier(_LinearTree, ClassifierMixin):
         self.categorical_features = categorical_features
         self.split_features = split_features
         self.linear_features = linear_features
+        # MODIFICATION START
+        self.equation_features = equation_features
+        self.exclude_split_features = exclude_split_features
+        # MODIFICATION END
         self.n_jobs = n_jobs
-        self.categorical_split_mode = categorical_split_mode  # Add this
-        self.encode_categorical = encode_categorical         # Add this
+        self.categorical_split_mode = categorical_split_mode
+        self.encode_categorical = encode_categorical
 
     def fit(self, X, y, sample_weight=None):
         """Build a Linear Tree of a linear estimator from the training

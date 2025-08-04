@@ -273,16 +273,29 @@ class _LinearTree(BaseEstimator):
     def __init__(self, base_estimator, *, criterion, max_depth,
                 min_samples_split, min_samples_leaf, max_bins,
                 min_impurity_decrease, categorical_features,
-                categorical_split_mode, encode_categorical, # Add these two
-                split_features, linear_features, n_jobs):
+                categorical_split_mode, encode_categorical,
+                split_features, linear_features,
+                # MODIFICATION START
+                equation_features, exclude_split_features,
+                # MODIFICATION END
+                n_jobs):
         
-        # ... (assign all existing self attributes)
+        self.base_estimator = base_estimator
+        self.criterion = criterion
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.max_bins = max_bins
         self.min_impurity_decrease = min_impurity_decrease
         self.categorical_features = categorical_features
-        self.categorical_split_mode = categorical_split_mode # Add this
-        self.encode_categorical = encode_categorical       # Add this
+        self.categorical_split_mode = categorical_split_mode
+        self.encode_categorical = encode_categorical
         self.split_features = split_features
         self.linear_features = linear_features
+        # MODIFICATION START
+        self.equation_features = equation_features
+        self.exclude_split_features = exclude_split_features
+        # MODIFICATION END
         self.n_jobs = n_jobs
 
     def _parallel_args(self):
@@ -291,6 +304,7 @@ class _LinearTree(BaseEstimator):
 # In class _LinearTree
     def _split(self, X, X_transformed, y, bins,
             support_sample_weight,
+            allowed_split_features,
             weights=None,
             loss=None):
         """Evaluate optimal splits in a given node (in a specific partition of
@@ -300,7 +314,12 @@ class _LinearTree(BaseEstimator):
         n_jobs = self.n_jobs
         
         # Dispatch numeric features to the standard binning function
-        numeric_split_features = [f for f in self._split_features if f not in self._categorical_features]
+        #numeric_split_features = [f for f in self._split_features if f not in self._categorical_features]
+        # MODIFICATION START
+        # Dispatch numeric features based on the allowed list
+        numeric_split_features = [f for f in allowed_split_features if f not in self._categorical_features]
+        # MODIFICATION END
+        
         if numeric_split_features:
             n_num_jobs, split_feat_num = _partition_columns(numeric_split_features, n_jobs)
             numeric_results = Parallel(n_jobs=n_num_jobs, verbose=0, **self._parallel_args())(
@@ -313,7 +332,11 @@ class _LinearTree(BaseEstimator):
             all_results.extend(numeric_results)
 
         # Dispatch categorical features to the correct function based on the mode
-        categorical_split_features = [f for f in self._split_features if f in self._categorical_features]
+        # MODIFICATION START
+        # Dispatch categorical features based on the allowed list
+        categorical_split_features = [f for f in allowed_split_features if f in self._categorical_features]
+        # MODIFICATION END
+        #categorical_split_features = [f for f in self._split_features if f in self._categorical_features]
         if categorical_split_features:
             n_cat_jobs, split_feat_cat = _partition_columns(categorical_split_features, n_jobs)
             
@@ -494,10 +517,38 @@ class _LinearTree(BaseEstimator):
         i = 1
         while len(queue) > 0:
 
-            split_t, split_col, left_node, right_node = self._split(
-    X[mask], X_transformed[mask], y[mask], bins,
-    support_sample_weight, weights[mask] if weights is not None else None,
-    loss=loss)
+            # MODIFICATION START
+            current_path = queue[-1]
+            # User-facing depth is 1-indexed (root split is at depth 1)
+            split_depth = len(current_path) + 1
+
+            # Determine eligible features for the current split
+            eligible_features = list(self._split_features)
+            if self.exclude_split_features:
+                # Exclude features specified for 'all' depths
+                to_exclude_all = self.exclude_split_features.get('all', [])
+                if to_exclude_all:
+                    eligible_features = [f for f in eligible_features if f not in to_exclude_all]
+
+                # Exclude features for the specific depth
+                to_exclude_depth = self.exclude_split_features.get(split_depth, [])
+                if to_exclude_depth:
+                    eligible_features = [f for f in eligible_features if f not in to_exclude_depth]
+            
+            # Call _split with the filtered list of features
+            if not eligible_features:
+                # No features left to split on
+                split_t, split_col, left_node, right_node = None, None, (None,) * 5, (None,) * 5
+            else:
+                split_t, split_col, left_node, right_node = self._split(
+                    X[mask], X_transformed[mask], y[mask], bins,
+                    support_sample_weight,
+                    allowed_split_features=eligible_features,  # Pass the filtered list
+                    weights=(weights[mask] if weights is not None else None),
+                    loss=loss
+                )
+            # MODIFICATION END
+
             # no utility in splitting
             if split_col is None or len(queue[-1]) >= self.max_depth:
                 self._leaves[queue[-1]] = self._nodes[queue[-1]]
@@ -707,7 +758,31 @@ class _LinearTree(BaseEstimator):
             else:
                 linear_features = np.setdiff1d(np.arange(n_feat), cat_features)
             self._linear_features = linear_features
+        
+                # MODIFICATION START
+        if self.equation_features is not None:
+            n_cols = X_transformed.shape[1]
+            
+            equation_features = np.unique(self.equation_features)
 
+            if not issubclass(equation_features.dtype.type, numbers.Integral):
+                raise ValueError(
+                    "No valid specification of equation_features. "
+                    "Only a scalar, list or array-like of integers is allowed.")
+
+            if (equation_features < 0).any() or (equation_features >= n_cols).any():
+                raise ValueError(
+                    'Equation features must be in [0, {}].'.format(n_cols - 1))
+
+            # Overwrite _linear_features with the user-specified set for the model
+            self._linear_features = equation_features
+
+            # If not encoding, ensure equation features are not categorical
+            if not self.encode_categorical:
+                if np.isin(self._linear_features, self._categorical_features).any():
+                    raise ValueError(
+                        "Equation features cannot also be categorical features when encode_categorical=False.")
+        # MODIFICATION END
         # Grow the tree using BOTH original X (for splitting) and X_transformed (for fitting)
         self._grow(X, X_transformed, y, sample_weight)
 
